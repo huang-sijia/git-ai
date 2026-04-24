@@ -1,0 +1,14 @@
+src/git/refs.rs
+  h_b5ac05759404e7 215,282,605
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.3",
+  "base_commit_sha": "152fc0dcc72881db6566cdca0d6dcce67b5545db",
+  "prompts": {},
+  "humans": {
+    "h_b5ac05759404e7": {
+      "author": "sijia.huang"
+    }
+  }
+}
