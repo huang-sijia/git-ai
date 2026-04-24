@@ -212,7 +212,7 @@ pub fn notes_add_batch(repo: &Repository, entries: &[(String, String)]) -> Resul
     }
 
     script.extend_from_slice(b"commit refs/notes/ai\n");
-    script.extend_from_slice(format!("committer git-ai <git-ai@local> {} +0000\n", now).as_bytes());
+    script.extend_from_slice(format!("committer sijia.huang <sijia.huang@gl-inet.com> {} +0000\n", now).as_bytes());
     script.extend_from_slice(b"data 0\n");
     if let Some(existing_tip) = existing_notes_tip {
         script.extend_from_slice(format!("from {}\n", existing_tip).as_bytes());
@@ -279,7 +279,7 @@ pub fn notes_add_blob_batch(
 
     let mut script = Vec::<u8>::new();
     script.extend_from_slice(b"commit refs/notes/ai\n");
-    script.extend_from_slice(format!("committer git-ai <git-ai@local> {} +0000\n", now).as_bytes());
+    script.extend_from_slice(format!("committer sijia.huang <sijia.huang@gl-inet.com> {} +0000\n", now).as_bytes());
     script.extend_from_slice(b"data 0\n");
     if let Some(existing_tip) = existing_notes_tip {
         script.extend_from_slice(format!("from {}\n", existing_tip).as_bytes());
@@ -602,7 +602,7 @@ pub fn fallback_merge_notes_ours(repo: &Repository, source_ref: &str) -> Result<
     //    this implements the "ours" merge strategy.
     let mut stream = String::new();
     stream.push_str(&format!("commit {}\n", local_ref));
-    stream.push_str("committer git-ai <git-ai@noreply> 0 +0000\n");
+    stream.push_str("committer sijia.huang <sijia.huang@gl-inet.com> 0 +0000\n");
     stream.push_str("data 23\nMerge notes (fallback)\n");
     stream.push_str(&format!("from {}\n", local_commit));
     stream.push_str(&format!("merge {}\n", source_commit));

@@ -3062,21 +3062,29 @@ pub fn find_repository_for_file(
         // Check for .git directory or file (file for submodules/worktrees)
         let git_path = dir.join(".git");
         if git_path.exists() {
-            // Found a .git - but we need to check if this is a submodule
-            // Submodules have a .git file (not directory) that points to the parent's .git/modules
+            // Found a .git - check if this is a submodule or a regular repo
             if git_path.is_file() {
-                // This is a submodule - read the file to check if it points to modules/
+                // A .git file can be either a submodule pointer or a linked worktree.
+                // Submodules: gitdir points to ../.git/modules/<name>
+                // Linked worktrees: gitdir points to .git/worktrees/<name>
                 if let Ok(content) = std::fs::read_to_string(&git_path)
                     && content.contains("gitdir:")
                     && content.contains("/modules/")
                 {
-                    // This is a submodule, skip it and continue searching up
-                    current_dir = dir.parent();
-                    continue;
+                    // This is a submodule - it is an independent repository with its own
+                    // workdir, HEAD, and notes. Use find_repository_in_path to correctly
+                    // resolve it (git -C <submodule-dir> rev-parse returns the submodule's
+                    // own workdir and git-dir).
+                    return find_repository_in_path(&dir.to_string_lossy());
                 }
+
+                // Linked worktree: skip and continue searching up to the main repo,
+                // since linked worktree files belong to a different working tree.
+                current_dir = dir.parent();
+                continue;
             }
 
-            // Found a real git repository, use find_repository_in_path
+            // Found a real .git directory, use find_repository_in_path
             return find_repository_in_path(&dir.to_string_lossy());
         }
 
@@ -4245,6 +4253,232 @@ index 0000000..abc1234 100644
         assert_eq!(
             staged.get("dir/b.txt"),
             Some(&run_git_stdout(&repo_dir, &["rev-parse", ":0:dir/b.txt"]))
+        );
+    }
+
+    #[test]
+    fn find_repository_for_file_returns_submodule_repo_not_parent() {
+        // When a file is inside a git submodule, find_repository_for_file should
+        // return the submodule's own repository, not the parent repository.
+        // This is critical for git-ai to correctly track AI attributions in
+        // submodule files when working from a parent-repo workspace.
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        // Create parent repo
+        let parent_repo = temp.path().join("parent");
+        fs::create_dir_all(&parent_repo).expect("create parent dir");
+        run_git(&parent_repo, &["init"]);
+        run_git(&parent_repo, &["config", "user.name", "Test User"]);
+        run_git(&parent_repo, &["config", "user.email", "test@example.com"]);
+        fs::write(parent_repo.join("README.md"), "# parent\n").expect("write parent README");
+        run_git(&parent_repo, &["add", "."]);
+        run_git(&parent_repo, &["commit", "-m", "initial parent commit"]);
+
+        // Create submodule repo
+        let submodule_src = temp.path().join("submodule_src");
+        fs::create_dir_all(&submodule_src).expect("create submodule dir");
+        run_git(&submodule_src, &["init"]);
+        run_git(&submodule_src, &["config", "user.name", "Test User"]);
+        run_git(&submodule_src, &["config", "user.email", "test@example.com"]);
+        fs::create_dir_all(submodule_src.join("src"));
+        fs::write(submodule_src.join("src").join("main.rs"), "fn main() {}\n")
+            .expect("write main.rs");
+        run_git(&submodule_src, &["add", "."]);
+        run_git(&submodule_src, &["commit", "-m", "initial submodule commit"]);
+
+        // Add submodule to parent
+        run_git(
+            &parent_repo,
+            &[
+                "submodule",
+                "add",
+                submodule_src.to_str().unwrap(),
+                "mysubmod",
+            ],
+        );
+        run_git(&parent_repo, &["add", "."]);
+        run_git(&parent_repo, &["commit", "-m", "add submodule"]);
+
+        // The submodule directory should have a .git file pointing to ../.git/modules/mysubmod
+        let submod_dir = parent_repo.join("mysubmod");
+        let dot_git = submod_dir.join(".git");
+        assert!(
+            dot_git.is_file(),
+            "submodule .git should be a file, got dir or missing"
+        );
+        let git_content = fs::read_to_string(&dot_git).expect("read .git file");
+        assert!(
+            git_content.contains("gitdir:") && git_content.contains("/modules/"),
+            "submodule .git file should contain gitdir and /modules/: {}",
+            git_content.trim()
+        );
+
+        // TEST 1: find_repository_for_file for a file inside the submodule
+        // should return the submodule's repository, NOT the parent's.
+        let submod_file = submod_dir.join("src").join("main.rs");
+        let submod_repo =
+            find_repository_for_file(submod_file.to_str().unwrap(), None)
+                .expect("should find repo for submodule file");
+
+        // The workdir should be the submodule directory, not the parent
+        let submod_workdir = submod_repo.workdir().expect("submod workdir");
+        assert_eq!(
+            submod_workdir.canonicalize().expect("canonical submod workdir"),
+            submod_dir.canonicalize().expect("canonical submod dir"),
+            "find_repository_for_file should return submodule repo for files inside submodule, \
+             got workdir: {:?}",
+            submod_workdir
+        );
+
+        // The git-dir should be under the parent's .git/modules/
+        let submod_gitdir = submod_repo.path();
+        assert!(
+            submod_gitdir.to_string_lossy().contains("/modules/mysubmod"),
+            "submodule git-dir should be under .git/modules/, got: {:?}",
+            submod_gitdir
+        );
+
+        // TEST 2: find_repository_for_file for a file in the parent repo (outside submodule)
+        // should still return the parent repository.
+        let parent_file = parent_repo.join("README.md");
+        let found_parent =
+            find_repository_for_file(parent_file.to_str().unwrap(), None)
+                .expect("should find repo for parent file");
+        assert_eq!(
+            found_parent.workdir().expect("parent workdir").canonicalize().expect("canonical"),
+            parent_repo.canonicalize().expect("canonical parent"),
+            "find_repository_for_file should return parent repo for files outside submodule"
+        );
+
+        // TEST 3: group_files_by_repository should group submodule files separately
+        let files = vec![
+            submod_file.to_str().unwrap().to_string(),
+            parent_file.to_str().unwrap().to_string(),
+        ];
+        let (repo_files, orphans) = group_files_by_repository(&files, None);
+        assert!(orphans.is_empty(), "no files should be orphaned");
+        assert_eq!(
+            repo_files.len(),
+            2,
+            "should have exactly 2 repos (parent + submodule), got: {}",
+            repo_files.len()
+        );
+
+        // Verify the submodule file is grouped under the submodule repo
+        let submod_workdir_key = submod_dir.canonicalize().expect("canonical submod dir");
+        assert!(
+            repo_files.contains_key(&submod_workdir_key),
+            "submodule files should be grouped under submodule workdir key"
+        );
+        let (_, submod_paths) = repo_files.get(&submod_workdir_key).expect("submod entry");
+        assert!(
+            submod_paths.iter().any(|p| p.contains("main.rs")),
+            "submodule group should contain main.rs, got: {:?}",
+            submod_paths
+        );
+    }
+
+    #[test]
+    fn find_repository_for_file_with_workspace_boundary_stops_at_parent_for_submodule() {
+        // When a workspace_root is set to the parent repo, find_repository_for_file
+        // should still correctly identify submodule files as belonging to the
+        // submodule repo (not skip past it to the parent).
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let parent_repo = temp.path().join("parent");
+        fs::create_dir_all(&parent_repo).expect("create parent dir");
+        run_git(&parent_repo, &["init"]);
+        run_git(&parent_repo, &["config", "user.name", "Test User"]);
+        run_git(&parent_repo, &["config", "user.email", "test@example.com"]);
+        fs::write(parent_repo.join("README.md"), "# parent\n").expect("write parent README");
+        run_git(&parent_repo, &["add", "."]);
+        run_git(&parent_repo, &["commit", "-m", "initial parent commit"]);
+
+        let submodule_src = temp.path().join("submodule_src");
+        fs::create_dir_all(&submodule_src).expect("create submodule dir");
+        run_git(&submodule_src, &["init"]);
+        run_git(&submodule_src, &["config", "user.name", "Test User"]);
+        run_git(&submodule_src, &["config", "user.email", "test@example.com"]);
+        fs::write(submodule_src.join("lib.rs"), "pub fn hello() {}\n").expect("write lib.rs");
+        run_git(&submodule_src, &["add", "."]);
+        run_git(&submodule_src, &["commit", "-m", "initial submodule commit"]);
+
+        run_git(
+            &parent_repo,
+            &[
+                "submodule",
+                "add",
+                submodule_src.to_str().unwrap(),
+                "mylib",
+            ],
+        );
+        run_git(&parent_repo, &["add", "."]);
+        run_git(&parent_repo, &["commit", "-m", "add submodule"]);
+
+        let submod_file = parent_repo.join("mylib").join("lib.rs");
+
+        // Even with workspace_root set to the parent repo, submodule files should
+        // resolve to the submodule repo
+        let repo = find_repository_for_file(
+            submod_file.to_str().unwrap(),
+            Some(parent_repo.to_str().unwrap()),
+        )
+        .expect("should find repo for submodule file with workspace boundary");
+
+        assert_eq!(
+            repo.workdir().expect("workdir").canonicalize().expect("canonical"),
+            parent_repo.join("mylib").canonicalize().expect("canonical"),
+            "with workspace_root set, submodule files should still resolve to submodule repo"
+        );
+    }
+
+    #[test]
+    fn path_is_in_workdir_submodule_files_are_transparent_to_parent() {
+        // Submodule files are considered part of the parent repo's workdir for
+        // the purpose of path_is_in_workdir (since git tracks submodule paths).
+        // This tests that path_is_in_workdir still correctly treats submodule
+        // .git files as transparent (not an intervening boundary).
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let parent_repo = temp.path().join("parent");
+        fs::create_dir_all(&parent_repo).expect("create parent dir");
+        run_git(&parent_repo, &["init"]);
+        run_git(&parent_repo, &["config", "user.name", "Test User"]);
+        run_git(&parent_repo, &["config", "user.email", "test@example.com"]);
+        fs::write(parent_repo.join("README.md"), "# parent\n").expect("write parent README");
+        run_git(&parent_repo, &["add", "."]);
+        run_git(&parent_repo, &["commit", "-m", "initial parent commit"]);
+
+        let submodule_src = temp.path().join("submodule_src2");
+        fs::create_dir_all(&submodule_src).expect("create submodule dir");
+        run_git(&submodule_src, &["init"]);
+        run_git(&submodule_src, &["config", "user.name", "Test User"]);
+        run_git(&submodule_src, &["config", "user.email", "test@example.com"]);
+        fs::write(submodule_src.join("app.js"), "console.log('hello');\n")
+            .expect("write app.js");
+        run_git(&submodule_src, &["add", "."]);
+        run_git(&submodule_src, &["commit", "-m", "initial submodule commit"]);
+
+        run_git(
+            &parent_repo,
+            &[
+                "submodule",
+                "add",
+                submodule_src.to_str().unwrap(),
+                "dep",
+            ],
+        );
+        run_git(&parent_repo, &["add", "."]);
+        run_git(&parent_repo, &["commit", "-m", "add submodule"]);
+
+        let parent = find_repository_in_path(parent_repo.to_str().unwrap()).expect("find parent");
+        let submod_file = parent_repo.join("dep").join("app.js");
+
+        // path_is_in_workdir should return true for submodule files from the
+        // parent repo's perspective - submodule .git files are transparent
+        assert!(
+            parent.path_is_in_workdir(&submod_file),
+            "submodule file should be considered in parent workdir (submodule .git is transparent)"
         );
     }
 }
