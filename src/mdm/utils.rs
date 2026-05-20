@@ -128,7 +128,7 @@ pub struct EditorCliCommand {
 
 impl EditorCliCommand {
     /// Create a command from a CLI binary found in PATH
-    fn from_path(program: &str) -> Self {
+    pub(crate) fn from_path(program: &str) -> Self {
         Self {
             program: program.to_string(),
             args_prefix: vec![],
@@ -181,6 +181,25 @@ impl EditorCliCommand {
 pub fn resolve_editor_cli(cli_name: &str) -> Option<EditorCliCommand> {
     if binary_exists(cli_name) {
         return Some(EditorCliCommand::from_path(cli_name));
+    }
+
+    // Special handling for Trae CN (China version) on Linux
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if cli_name == "trae" {
+        let server_bin = home_dir().join(".trae-cn-server").join("bin");
+        if let Ok(entries) = std::fs::read_dir(&server_bin) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let cli_path = path.join("bin").join("remote-cli").join("trae-cn");
+                    if cli_path.is_file() {
+                        return Some(EditorCliCommand::from_path(
+                            cli_path.to_string_lossy().as_ref(),
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     find_editor_cli_js(cli_name)
@@ -304,6 +323,68 @@ fn get_editor_cli_candidates(cli_name: &str) -> Vec<(PathBuf, PathBuf)> {
                             .join("out")
                             .join("cli.js"),
                     ));
+                }
+            }
+        }
+        "trae" => {
+            #[cfg(target_os = "macos")]
+            {
+                for apps_dir in [PathBuf::from("/Applications"), home.join("Applications")] {
+                    for app_name in ["Trae.app", "Trae-CN.app"] {
+                        let app = apps_dir.join(app_name);
+                        let binary_name = if app_name == "Trae-CN.app" {
+                            "Trae-CN"
+                        } else {
+                            "Trae"
+                        };
+                        candidates.push((
+                            app.join("Contents").join("MacOS").join(binary_name),
+                            app.join("Contents")
+                                .join("Resources")
+                                .join("app")
+                                .join("out")
+                                .join("cli.js"),
+                        ));
+                    }
+                }
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                for base in [
+                    PathBuf::from("/opt/Trae"),
+                    PathBuf::from("/usr/share/trae"),
+                    home.join(".local").join("share").join("trae"),
+                    home.join(".local").join("share").join("Trae"),
+                ] {
+                    candidates.push((
+                        base.join("trae"),
+                        base.join("resources")
+                            .join("app")
+                            .join("out")
+                            .join("cli.js"),
+                    ));
+                }
+            }
+            #[cfg(windows)]
+            {
+                if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+                    for dir_name in ["Trae", "Trae-CN"] {
+                        let base = PathBuf::from(&local_app_data)
+                            .join("Programs")
+                            .join(dir_name);
+                        let exe_name = if dir_name == "Trae-CN" {
+                            "Trae-CN.exe"
+                        } else {
+                            "Trae.exe"
+                        };
+                        candidates.push((
+                            base.join(exe_name),
+                            base.join("resources")
+                                .join("app")
+                                .join("out")
+                                .join("cli.js"),
+                        ));
+                    }
                 }
             }
         }

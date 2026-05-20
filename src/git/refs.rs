@@ -602,7 +602,7 @@ pub fn fallback_merge_notes_ours(repo: &Repository, source_ref: &str) -> Result<
     //    this implements the "ours" merge strategy.
     let mut stream = String::new();
     stream.push_str(&format!("commit {}\n", local_ref));
-    stream.push_str("committer git-ai <git-ai@noreply> 0 +0000\n");
+    stream.push_str("committer git-ai <git-ai@local> 0 +0000\n");
     stream.push_str("data 23\nMerge notes (fallback)\n");
     stream.push_str(&format!("from {}\n", local_commit));
     stream.push_str(&format!("merge {}\n", source_commit));

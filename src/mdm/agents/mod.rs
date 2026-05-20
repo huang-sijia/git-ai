@@ -9,6 +9,7 @@ mod github_copilot;
 mod jetbrains;
 mod opencode;
 mod pi;
+mod trae;
 mod vscode;
 mod windsurf;
 
@@ -23,6 +24,7 @@ pub use github_copilot::GitHubCopilotInstaller;
 pub use jetbrains::JetBrainsInstaller;
 pub use opencode::OpenCodeInstaller;
 pub use pi::PiInstaller;
+pub use trae::TraeInstaller;
 pub use vscode::VSCodeInstaller;
 pub use windsurf::WindsurfInstaller;
 
@@ -44,5 +46,6 @@ pub fn get_all_installers() -> Vec<Box<dyn HookInstaller>> {
         Box::new(FirebenderInstaller),
         Box::new(JetBrainsInstaller),
         Box::new(WindsurfInstaller),
+        Box::new(TraeInstaller),
     ]
 }
