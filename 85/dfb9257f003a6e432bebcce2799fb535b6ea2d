@@ -1,0 +1,9 @@
+src/git/refs.rs
+  h_b5ac05759404e7 605
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.3",
+  "base_commit_sha": "98f35a3c055113756f7620e28047b9d6babb2755",
+  "prompts": {}
+}
