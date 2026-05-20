@@ -1,0 +1,17 @@
+src/git/refs.rs
+  h_b5ac05759404e7 605
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.3",
+  "base_commit_sha": "e2da80222a0854f7ff6d255f7a18ccc9754eedb3",
+  "prompts": {},
+  "humans": {
+    "h_b5ac05759404e7": {
+      "author": "sijia.huang"
+    },
+    "h_cc471168478334": {
+      "author": "huang-sijia <sijia.huang@gl-inet.com>"
+    }
+  }
+}
